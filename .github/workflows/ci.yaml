@@ -1,0 +1,125 @@
+name: CI Pipeline with Auto-Versioning for Windows 11
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write # Required for pushing commits/tags and creating releases
+
+jobs:
+  test-and-release:
+    runs-on: Windows-2022
+
+    env:
+      MIX_ENV: prod
+
+    steps:
+      # Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch full history for versioning
+
+      # Set up Elixir and Erlang
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.18.2' # Elixir version
+          otp-version: '27'        # OTP version
+
+      # Cache dependencies
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+
+      # Optional: Install build tools for native dependencies (uncomment if needed)
+      # - name: Install MinGW for native compilation
+      #   run: choco install -y mingw
+      #   shell: powershell
+
+      # Install dependencies
+      - name: Install dependencies
+        run: mix deps.get
+        shell: powershell
+
+      # Run tests
+      - name: Run tests
+        run: mix test
+        shell: powershell
+
+      # Auto-increment version and create tag (only on main branch push)
+      - name: Increment version and tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          # Get current version from mix.exs
+          $versionMatch = Select-String -Path mix.exs -Pattern 'version:\s*[''"]([\d]+\.[\d]+\.[\d]+)[''"]'
+          if (-not $versionMatch) {
+            Write-Error "Could not find version in mix.exs"
+            exit 1
+          }
+          $version = $versionMatch.Matches.Groups[1].Value
+          Write-Output "Current version: $version"
+          # Increment patch version (e.g., 1.0.0 -> 1.0.1)
+          $version_parts = $version.Split('.')
+          $patch = [int]$version_parts[2] + 1
+          $new_version = "$($version_parts[0]).$($version_parts[1]).$patch"
+          Write-Output "New version: $new_version"
+          # Update mix.exs with new version
+          (Get-Content mix.exs) -replace "version:\s*['`"]$version['`"]", "version: `"$new_version`"" | Set-Content mix.exs
+          # Verify update
+          Write-Output "Updated mix.exs to version: $new_version"
+          Get-Content mix.exs | Select-String "version:"
+          # Commit updated mix.exs
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add mix.exs
+          git commit -m "Bump version to $new_version"
+          git push
+          # Create and push tag
+          git tag "v$new_version"
+          git push origin "v$new_version"
+        shell: powershell
+
+      # Build production release (only on main branch push)
+      - name: Build production release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mix release
+          dir _build/prod/rel/range_fold_freq
+        shell: powershell
+
+      # Compress release directory to ZIP
+      - name: Compress release to ZIP
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          $version = (Select-String -Path mix.exs -Pattern 'version:\s*[''"]([\d]+\.[\d]+\.[\d]+)[''"]').Matches.Groups[1].Value
+          Compress-Archive -Path _build/prod/rel/range_fold_freq/* -DestinationPath "range_fold_freq-v$version.zip"
+          Write-Output "Created ZIP archive: range_fold_freq-v$version.zip"
+          dir range_fold_freq-v$version.zip
+        shell: powershell
+
+      # Create GitHub release with ZIP artifact
+      - name: Create GitHub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get new version from mix.exs
+          $version = (Select-String -Path mix.exs -Pattern 'version:\s*[''"]([\d]+\.[\d]+\.[\d]+)[''"]').Matches.Groups[1].Value
+          # Create release with ZIP artifact
+          gh release create "v$version" `
+            --title "Release v$version" `
+            --notes "Auto-generated release for version v$version" `
+            "range_fold_freq-v$version.zip#range_fold_freq-v$version.zip"
+        shell: powershell
