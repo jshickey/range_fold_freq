@@ -2,6 +2,26 @@
 
 This project generates Excel reports showing the range-weighted fold frequency for defensive poker scenarios. It processes CSV files from the handclass project and calculates the sum of (percent_of_range * mean_fold_freq) grouped by board characteristics.
 
+## How to Run
+
+### Windows
+
+After building the release with `mix release`, run the batch file wrapper with your directory path:
+
+```batch
+run_range_fold_freq.bat c:\prod\Test_Report_Container
+```
+
+The batch file accepts native Windows paths with backslashes and automatically handles path conversion.
+
+### Unix/Linux/Mac
+
+Run the release directly:
+
+```bash
+bin/range_fold_freq eval 'RangeFoldFreq.run("/path/to/directory")'
+```
+
 ## Overview
 
 The range_fold_freq tool:
